@@ -352,7 +352,7 @@ class MemoriaManager:
             "start_new_session": True,
         }
         if os.name == "nt":
-            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         subprocess.Popen(
             [sys.executable, "-m", "omnivoice.integrations.memoria_worker", encoded],
             **kwargs,
@@ -480,7 +480,7 @@ class MemoriaManager:
                 batch_embeddings = embedder.embed_texts(batch)
                 with self._db() as conn:
                     for inner_index, (text, embedding) in enumerate(
-                        zip(batch, batch_embeddings, strict=False)
+                        zip(batch, batch_embeddings)
                     ):
                         absolute_index = uncached_indices[offset + inner_index]
                         generated[absolute_index] = embedding

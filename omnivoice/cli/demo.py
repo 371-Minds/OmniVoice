@@ -331,7 +331,9 @@ def build_demo(
         with gr.Accordion("Memoria (optional)", open=False):
             mem_user_id = gr.Textbox(
                 label="Memoria User ID",
-                value=default_memory_user_id or "",
+                value=(
+                    default_memory_user_id if default_memory_user_id is not None else ""
+                ),
                 placeholder="user_123",
             )
             mem_query = gr.Textbox(

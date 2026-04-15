@@ -306,7 +306,19 @@ def _sort_samples_by_duration(
     """Return (sample, total_duration) pairs sorted by duration descending."""
     sample_with_duration = []
     for sample in samples:
-        _, ref_text, ref_audio_path, text, _, dur, _, _, _, _, _ = sample
+        (
+            _sample_id,
+            ref_text,
+            ref_audio_path,
+            text,
+            _lang_id,
+            dur,
+            _speed,
+            _instruct,
+            _memory_user_id,
+            _memory_query,
+            _memory_store_text,
+        ) = sample
         total_duration = estimate_sample_total_duration(
             duration_estimator, text, ref_text, ref_audio_path, gen_duration=dur
         )
