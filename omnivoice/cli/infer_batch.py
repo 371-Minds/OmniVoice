@@ -28,7 +28,8 @@ Test list format (JSONL, one JSON object per line):
     Required fields: "id", "text"
     Voice cloning:   "ref_audio", "ref_text"
     Voice design:    "instruct"
-    Optional:        "language_id", "duration", "speed"
+    Optional:        "language_id", "duration", "speed",
+                     "memoria_user_id", "memoria_query", "memoria_store_text"
 """
 
 import argparse
@@ -44,6 +45,12 @@ from typing import List, Optional, Tuple
 import torch
 from tqdm import tqdm
 
+from omnivoice.integrations import (
+    MemoryRecord,
+    MemoriaManager,
+    add_memoria_args,
+    build_memoria_config,
+)
 from omnivoice.models.omnivoice import OmniVoice
 import soundfile as sf
 
@@ -88,7 +95,10 @@ def get_parser():
         '"instruct" (str): instruction for voice design (used when ref_audio is absent); '
         '"language_id" (str): language code, e.g. "en"; '
         '"duration" (float): target duration in seconds; '
-        '"speed" (float): speaking speed multiplier. '
+        '"speed" (float): speaking speed multiplier; '
+        '"memoria_user_id" (str): Memoria user id override; '
+        '"memoria_query" (str): query to retrieve memory-conditioned instruct text; '
+        '"memoria_store_text" (str): text to store after successful synthesis. '
         "Only id and text are required; all other fields are optional.",
     )
     parser.add_argument(
@@ -201,7 +211,7 @@ def get_parser():
         help="Language id to use when test_list JSONL entries do not contain "
         "a language_id field.",
     )
-    return parser
+    return add_memoria_args(parser)
 
 
 def process_init(rank_queue, model_checkpoint, warmup=0):
@@ -296,7 +306,19 @@ def _sort_samples_by_duration(
     """Return (sample, total_duration) pairs sorted by duration descending."""
     sample_with_duration = []
     for sample in samples:
-        _, ref_text, ref_audio_path, text, _, dur, _, _ = sample
+        (
+            _sample_id,
+            ref_text,
+            ref_audio_path,
+            text,
+            _lang_id,
+            dur,
+            _speed,
+            _instruct,
+            _memory_user_id,
+            _memory_query,
+            _memory_store_text,
+        ) = sample
         total_duration = estimate_sample_total_duration(
             duration_estimator, text, ref_text, ref_audio_path, gen_duration=dur
         )
@@ -372,7 +394,19 @@ def run_inference_batch(
     instructs = []
 
     for sample in batch_samples:
-        save_name, ref_text, ref_audio_path, text, lang_id, dur, spd, instruct = sample
+        (
+            save_name,
+            ref_text,
+            ref_audio_path,
+            text,
+            lang_id,
+            dur,
+            spd,
+            instruct,
+            _memory_user_id,
+            _memory_query,
+            _memory_store_text,
+        ) = sample
         save_names.append(save_name)
         ref_texts.append(ref_text)
         ref_audio_paths.append(ref_audio_path)
@@ -419,6 +453,7 @@ def main():
 
     args = get_parser().parse_args()
     os.makedirs(args.res_dir, exist_ok=True)
+    memoria = MemoriaManager(build_memoria_config(args))
 
     device_type, num_devices = get_best_device()
     if device_type == "cpu":
@@ -441,6 +476,18 @@ def main():
     samples = []
     for s in samples_raw:
         lang_id = args.lang_id if args.lang_id is not None else s.get("language_id")
+        memory_user_id = (
+            s.get("memoria_user_id") or s.get("user_id") or args.memoria_user_id
+        )
+        memory_query = s.get("memoria_query") or args.memoria_query
+        effective_instruct = s.get("instruct")
+        if memory_user_id and memory_query:
+            effective_instruct, _ = memoria.enrich_instruct(
+                effective_instruct,
+                user_id=memory_user_id,
+                query=memory_query,
+                top_k=args.memoria_top_k,
+            )
         samples.append(
             (
                 s["id"],
@@ -450,7 +497,10 @@ def main():
                 lang_id,
                 s.get("duration"),
                 s.get("speed"),
-                s.get("instruct"),
+                effective_instruct,
+                memory_user_id,
+                memory_query,
+                s.get("memoria_store_text") or args.memoria_store_text,
             )
         )
 
@@ -493,14 +543,39 @@ def main():
                     )
 
             args_dict = vars(args)
-
-            for batch in batches:
-                futures.append(
-                    executor.submit(
-                        run_inference_batch, batch_samples=batch, **args_dict
-                    )
+            memory_store_index = {}
+            for sample in samples:
+                (
+                    sample_id,
+                    _ref_text,
+                    _ref_audio,
+                    sample_text,
+                    sample_lang,
+                    _duration,
+                    _speed,
+                    _instruct,
+                    memory_user_id,
+                    memory_query,
+                    memory_store_text,
+                ) = sample
+                if not memory_user_id or not memory_store_text:
+                    continue
+                memory_store_index[sample_id] = MemoryRecord(
+                    user_id=memory_user_id,
+                    text=memory_store_text,
+                    metadata={
+                        "source": "omnivoice-infer-batch",
+                        "sample_id": sample_id,
+                        "text": sample_text,
+                        "language": sample_lang,
+                        "memory_query": memory_query,
+                    },
                 )
+            for batch in batches:
+                future = executor.submit(run_inference_batch, batch_samples=batch, **args_dict)
+                futures.append(future)
 
+            records_to_store: list[MemoryRecord] = []
             for future in tqdm(
                 as_completed(futures), total=len(futures), desc="Processing samples"
             ):
@@ -509,6 +584,8 @@ def main():
                     for s_name, synth_time, audio_dur, status in result:
                         total_synthesis_time.append(synth_time)
                         total_audio_duration.append(audio_dur)
+                        if status == "success" and s_name in memory_store_index:
+                            records_to_store.append(memory_store_index[s_name])
                         rtf = synth_time / audio_dur if audio_dur > 0 else float("inf")
                         logging.debug(
                             f"Processed {s_name}: Audio Duration={audio_dur:.2f}s, "
@@ -518,6 +595,9 @@ def main():
                     logging.error(f"Failed to process sample: {e}")
                     detailed_error = traceback.format_exc()
                     logging.error(f"Detailed error: {detailed_error}")
+            if records_to_store:
+                queued = memoria.store_many_async(records_to_store)
+                logging.info("Queued %s memoria store task(s).", len(queued))
 
     except (Exception, KeyboardInterrupt) as e:
         logging.critical(

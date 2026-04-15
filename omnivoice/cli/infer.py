@@ -26,6 +26,7 @@ import torch
 
 import soundfile as sf
 
+from omnivoice.integrations import MemoriaManager, add_memoria_args, build_memoria_config
 from omnivoice.models.omnivoice import OmniVoice
 from omnivoice.utils.common import str2bool
 
@@ -116,7 +117,7 @@ def get_parser() -> argparse.ArgumentParser:
         default=None,
         help="Device to use for inference. Auto-detected if not specified.",
     )
-    return parser
+    return add_memoria_args(parser)
 
 
 def main():
@@ -124,6 +125,7 @@ def main():
     logging.basicConfig(format=formatter, level=logging.INFO, force=True)
 
     args = get_parser().parse_args()
+    memoria = MemoriaManager(build_memoria_config(args))
 
     device = args.device or get_best_device()
     logging.info(f"Loading model from {args.model} on {device} ...")
@@ -131,13 +133,22 @@ def main():
         args.model, device_map=device, dtype=torch.float16
     )
 
+    effective_instruct, contexts = memoria.enrich_instruct(
+        args.instruct,
+        user_id=args.memoria_user_id,
+        query=args.memoria_query,
+        top_k=args.memoria_top_k,
+    )
+    if contexts:
+        logging.info("Retrieved %s memoria item(s) for prompt conditioning.", len(contexts))
+
     logging.info(f"Generating audio for: {args.text[:80]}...")
     audios = model.generate(
         text=args.text,
         language=args.language,
         ref_audio=args.ref_audio,
         ref_text=args.ref_text,
-        instruct=args.instruct,
+        instruct=effective_instruct,
         duration=args.duration,
         num_step=args.num_step,
         guidance_scale=args.guidance_scale,
@@ -152,6 +163,19 @@ def main():
 
     sf.write(args.output, audios[0], model.sampling_rate)
     logging.info(f"Saved to {args.output}")
+    mref = memoria.store_text_async(
+        user_id=args.memoria_user_id,
+        text=args.memoria_store_text,
+        metadata={
+            "source": "omnivoice-infer",
+            "text": args.text,
+            "language": args.language,
+            "output": args.output,
+            "contexts": contexts,
+        },
+    )
+    if mref:
+        logging.info("Queued memoria store: %s", mref)
 
 
 if __name__ == "__main__":

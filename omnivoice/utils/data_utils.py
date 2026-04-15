@@ -32,7 +32,8 @@ def read_test_list(path):
     Each line should be a JSON object.  Only ``id`` and ``text`` are required;
     all other fields are optional (default to ``None``):
         id, text, ref_audio, ref_text, instruct,
-        language_id, language_name, duration, speed
+        language_id, language_name, duration, speed,
+        memoria_user_id, memoria_query, memoria_store_text
 
     Note: ``language_name`` is only used by evaluation scripts (under
     ``omnivoice/eval/``) for grouping and reporting results.  The model
@@ -63,6 +64,9 @@ def read_test_list(path):
                 "duration": obj.get("duration"),
                 "speed": obj.get("speed"),
                 "instruct": obj.get("instruct"),
+                "memoria_user_id": obj.get("memoria_user_id") or obj.get("user_id"),
+                "memoria_query": obj.get("memoria_query"),
+                "memoria_store_text": obj.get("memoria_store_text"),
             }
             samples.append(sample)
     return samples

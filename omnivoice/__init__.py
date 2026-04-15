@@ -24,5 +24,21 @@ from omnivoice.models.omnivoice import (
     OmniVoiceConfig,
     OmniVoiceGenerationConfig,
 )
+from omnivoice.integrations import (
+    MemoryRecord,
+    MemoriaConfig,
+    MemoriaManager,
+    add_memoria_args,
+    build_memoria_config,
+)
 
-__all__ = ["OmniVoice", "OmniVoiceConfig", "OmniVoiceGenerationConfig"]
+__all__ = [
+    "MemoryRecord",
+    "MemoriaConfig",
+    "MemoriaManager",
+    "OmniVoice",
+    "OmniVoiceConfig",
+    "OmniVoiceGenerationConfig",
+    "add_memoria_args",
+    "build_memoria_config",
+]
