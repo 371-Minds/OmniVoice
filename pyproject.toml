@@ -54,6 +54,10 @@ eval = [
     "unidecode",            # Unicode normalization
 ]
 
+memory = [
+    "onnxruntime>=1.23.1",
+]
+
 [project.scripts]
 omnivoice-infer = "omnivoice.cli.infer:main"
 omnivoice-infer-batch = "omnivoice.cli.infer_batch:main"

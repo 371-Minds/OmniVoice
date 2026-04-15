@@ -18,7 +18,7 @@
 
 OmniVoice is a state-of-the-art massively multilingual zero-shot text-to-speech (TTS) model supporting over 600 languages. Built on a novel diffusion language model-style architecture, it generates high-quality speech with superior inference speed, supporting voice cloning and voice design.
 
-**Contents**: [Key Features](#key-features) | [Installation](#installation) | [Quick Start](#quick-start) | [Python API](#python-api) | [Command-Line Tools](#command-line-tools) | [Training & Evaluation](#training--evaluation) | [Discussion](#discussion--communication) | [Citation](#citation)
+**Contents**: [Key Features](#key-features) | [Installation](#installation) | [Quick Start](#quick-start) | [Python API](#python-api) | [Command-Line Tools](#command-line-tools) | [Memoria Integration](#memoria-integration) | [Training & Evaluation](#training--evaluation) | [Discussion](#discussion--communication) | [Citation](#citation)
 
 ## Key Features
 
@@ -26,6 +26,7 @@ OmniVoice is a state-of-the-art massively multilingual zero-shot text-to-speech 
 - **Voice Cloning**: State-of-the-art voice cloning quality.
 - **Voice Design**: Control voices via assigned speaker attributes (gender, age, pitch, dialect/accent, whisper, etc.).
 - **Fine-grained Control**: Non-verbal symbols (e.g., `[laughter]`) and pronunciation correction via pinyin or phonemes.
+- **Memoria-powered Context Retention**: Optional long-term memory retrieval and storage for persistent speaker, language, and persona preferences.
 - **Fast Inference**: RTF as low as 0.025 (40x faster than real-time).
 - **Diffusion Language Model-style Architecture**: A clean, streamlined, and scalable design that delivers both quality and speed.
 
@@ -85,6 +86,21 @@ git clone https://github.com/k2-fsa/OmniVoice.git
 cd OmniVoice
 uv sync
 ```
+
+### Optional: Memoria / embedded memory support
+
+Install the memory extra if you want embedded Memoria storage with local ONNX embeddings:
+
+```bash
+pip install -e ".[memory]"
+```
+
+This enables:
+
+- SQLite-backed memory persistence and embedding cache
+- ONNX Runtime local embeddings for offline/embedded deployments
+- Async post-generation memory storage
+- Memory retrieval hooks in `omnivoice-infer`, `omnivoice-infer-batch`, and `omnivoice-demo`
 
 > **Tip**: Can use mirror with `uv sync --default-index "https://mirrors.aliyun.com/pypi/simple"`
 
@@ -229,9 +245,18 @@ Three CLI entry points are provided. The CLI tools support all features availabl
 
 ```bash
 omnivoice-demo --ip 0.0.0.0 --port 8001
+
+# With embedded Memoria enabled
+omnivoice-demo \
+    --ip 0.0.0.0 \
+    --port 8001 \
+    --memoria-mode local \
+    --memoria-user-id demo-user \
+    --memoria-onnx-model /models/all-MiniLM-L6-v2/model.onnx \
+    --memoria-tokenizer sentence-transformers/all-MiniLM-L6-v2
 ```
 
-Provides a web UI for voice cloning and voice design. See `omnivoice-demo --help` for all options.
+Provides a web UI for voice cloning and voice design. When Memoria is enabled, each tab exposes optional fields for memory retrieval and post-generation storage. See `omnivoice-demo --help` for all options.
 
 ### Single Inference
 
@@ -256,6 +281,19 @@ omnivoice-infer \
     --model k2-fsa/OmniVoice \
     --text "This is a test for text to speech."\
     --output hello.wav
+
+# Remote Memoria retrieval + async store
+omnivoice-infer \
+    --model k2-fsa/OmniVoice \
+    --text "Please introduce the product in my usual voice." \
+    --instruct "female, calm, British accent" \
+    --output hello.wav \
+    --memoria-mode remote \
+    --memoria-url https://api.memoria.example \
+    --memoria-api-key YOUR_API_KEY \
+    --memoria-user-id user_123 \
+    --memoria-query "speaker preferences and pronunciation notes" \
+    --memoria-store-text "Prefers calm British product narration with concise phrasing."
 ```
 
 ### Batch Inference
@@ -276,6 +314,56 @@ The test list is a JSONL file where each line is a JSON object:
 Only `id` and `text` are mandatory fields. `ref_audio` and `ref_text` are used in voice cloning mode. `instruct` is used in voice design mode. If no reference audio or instruct are provided, the model will generate text in a random voice.
 
 `language_id`, `duration`, and `speed` are optional. `duration` (in seconds) fixes the output length; `speed` controls the speaking rate. If `duration` and `speed` are both provided, `speed` will be ignored.
+
+Memoria-aware manifests can also include:
+
+```json
+{"id": "sample_002", "text": "Welcome back.", "language_id": "en", "memoria_user_id": "user_123", "memoria_query": "recall the user's voice preferences", "memoria_store_text": "Uses a warm onboarding tone for repeat listeners."}
+```
+
+These fields let batch inference retrieve contextual memory before synthesis and queue async memory writes after successful output generation.
+
+## Memoria Integration
+
+OmniVoice now ships with an embedded Memoria-style integration layer inspired by [371-Minds/memoria](https://github.com/371-Minds/memoria).
+
+### Supported modes
+
+- `--memoria-mode off`: disable memory features
+- `--memoria-mode remote`: talk to a deployed Memoria API (`--memoria-url`, `--memoria-api-key`)
+- `--memoria-mode local`: use embedded SQLite + ONNX Runtime storage/retrieval
+- `--memoria-mode auto`: prefer remote Memoria, fall back to local ONNX memory
+
+### Embedded-memory enhancements
+
+- **Embedding cache**: repeated local queries and memory texts reuse cached embeddings from SQLite
+- **Batch embeddings**: embedded mode batches uncached texts before ONNX inference
+- **Async store**: CLI and demo flows return an `mref_*` receipt immediately and persist memory in a detached worker
+- **Local embeddings**: ONNX Runtime support enables offline and embedded deployments without a remote memory service
+
+### Design notes
+
+- Retrieved memory is merged into `instruct` only; the spoken `text` is left unchanged.
+- Single and batch inference both support memory retrieval before synthesis and async storage afterward.
+- Embedded mode stores memories and cache entries in `~/.cache/omnivoice/memoria.sqlite3` by default. Override with `--memoria-db-path`.
+- Local mode expects an ONNX embedding model plus a compatible tokenizer. A practical pairing is `sentence-transformers/all-MiniLM-L6-v2` exported to ONNX.
+
+### CLI flags
+
+All three inference entrypoints share the same core Memoria flags:
+
+- `--memoria-mode`
+- `--memoria-url`
+- `--memoria-api-key`
+- `--memoria-user-id`
+- `--memoria-query`
+- `--memoria-store-text`
+- `--memoria-top-k`
+- `--memoria-db-path`
+- `--memoria-onnx-model`
+- `--memoria-tokenizer`
+
+See `omnivoice-infer --help`, `omnivoice-infer-batch --help`, or `omnivoice-demo --help` for the full set.
 
 ---
 

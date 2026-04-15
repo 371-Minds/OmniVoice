@@ -1,0 +1,48 @@
+version: "2.0"
+
+services:
+  omnivoice:
+    image: python:3.11-slim
+    command:
+      - /bin/sh
+      - -lc
+    args:
+      - >-
+        pip install --no-cache-dir "omnivoice[memory]" &&
+        omnivoice-demo --ip 0.0.0.0 --port 7860
+    env:
+      - HF_HOME=/data/huggingface
+      - OMNIVOICE_MEMORIA_MODE=auto
+      - MEMORIA_URL=
+      - MEMORIA_API_KEY=
+      - MEMORIA_USER_ID=akash-demo
+      - MEMORIA_ONNX_MODEL=/data/models/all-MiniLM-L6-v2/model.onnx
+      - MEMORIA_TOKENIZER=sentence-transformers/all-MiniLM-L6-v2
+    expose:
+      - port: 7860
+        as: 80
+        to:
+          - global: true
+
+profiles:
+  compute:
+    omnivoice:
+      resources:
+        cpu:
+          units: 4
+        memory:
+          size: 16Gi
+        storage:
+          size: 50Gi
+  placement:
+    dcloud:
+      pricing:
+        omnivoice:
+          denom: uakt
+          amount: 5000
+
+deployment:
+  omnivoice:
+    dcloud:
+      profile: omnivoice
+      count: 1

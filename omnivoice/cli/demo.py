@@ -31,6 +31,7 @@ import gradio as gr
 import numpy as np
 import torch
 
+from omnivoice.integrations import MemoriaManager, add_memoria_args, build_memoria_config
 from omnivoice import OmniVoice, OmniVoiceGenerationConfig
 from omnivoice.utils.lang_map import LANG_NAMES, lang_display_name
 
@@ -143,7 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip loading Whisper ASR model. Reference text auto-transcription"
         " will be unavailable.",
     )
-    return parser
+    return add_memoria_args(parser)
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +156,8 @@ def build_demo(
     model: OmniVoice,
     checkpoint: str,
     generate_fn=None,
+    memory_manager: MemoriaManager | None = None,
+    default_memory_user_id: str | None = None,
 ) -> gr.Blocks:
 
     sampling_rate = model.sampling_rate
@@ -174,6 +177,9 @@ def build_demo(
         postprocess_output,
         mode,
         ref_text=None,
+        memory_user_id=None,
+        memory_query=None,
+        memory_store_text=None,
     ):
         if not text or not text.strip():
             return None, "Please enter the text to synthesize."
@@ -205,16 +211,40 @@ def build_demo(
                 ref_text=ref_text,
             )
 
-        if instruct and instruct.strip():
-            kw["instruct"] = instruct.strip()
+        effective_instruct = instruct.strip() if instruct and instruct.strip() else None
+        memory_hits: list[str] = []
+        if memory_manager is not None:
+            effective_instruct, memory_hits = memory_manager.enrich_instruct(
+                effective_instruct,
+                user_id=(memory_user_id or default_memory_user_id or None),
+                query=(memory_query or None),
+            )
+        if effective_instruct:
+            kw["instruct"] = effective_instruct
 
         try:
             audio = model.generate(**kw)
         except Exception as e:
             return None, f"Error: {type(e).__name__}: {e}"
 
+        status = "Done."
+        if memory_manager is not None:
+            mref = memory_manager.store_text_async(
+                user_id=(memory_user_id or default_memory_user_id or None),
+                text=memory_store_text or None,
+                metadata={
+                    "source": "omnivoice-demo",
+                    "mode": mode,
+                    "language": lang,
+                    "text": text.strip(),
+                    "checkpoint": checkpoint,
+                    "memory_hits": memory_hits,
+                },
+            )
+            if mref:
+                status = f"Done. Memory queued: {mref}"
         waveform = (audio[0] * 32767).astype(np.int16)
-        return (sampling_rate, waveform), "Done."
+        return (sampling_rate, waveform), status
 
     # Allow external wrappers (e.g. spaces.GPU for ZeroGPU Spaces)
     _gen = generate_fn if generate_fn is not None else _gen_core
@@ -297,6 +327,25 @@ def build_demo(
             )
         return ns, gs, dn, sp, du, pp, po
 
+    def _memory_settings():
+        with gr.Accordion("Memoria (optional)", open=False):
+            mem_user_id = gr.Textbox(
+                label="Memoria User ID",
+                value=default_memory_user_id or "",
+                placeholder="user_123",
+            )
+            mem_query = gr.Textbox(
+                label="Memory Query",
+                lines=2,
+                placeholder="Recall style, language, or persona preferences.",
+            )
+            mem_store = gr.Textbox(
+                label="Store Memory Text",
+                lines=2,
+                placeholder="Optional note to persist after synthesis.",
+            )
+        return mem_user_id, mem_query, mem_store
+
     with gr.Blocks(theme=theme, css=css, title="OmniVoice Demo") as demo:
         gr.Markdown(
             """
@@ -352,6 +401,7 @@ by Xiaomi AI Lab Next-gen Kaldi team.
                             vc_pp,
                             vc_po,
                         ) = _gen_settings()
+                        vc_mem_user, vc_mem_query, vc_mem_store = _memory_settings()
                         vc_btn = gr.Button("Generate / 生成", variant="primary")
                     with gr.Column(scale=1):
                         vc_audio = gr.Audio(
@@ -361,7 +411,21 @@ by Xiaomi AI Lab Next-gen Kaldi team.
                         vc_status = gr.Textbox(label="Status / 状态", lines=2)
 
                 def _clone_fn(
-                    text, lang, ref_aud, ref_text, instruct, ns, gs, dn, sp, du, pp, po
+                    text,
+                    lang,
+                    ref_aud,
+                    ref_text,
+                    instruct,
+                    ns,
+                    gs,
+                    dn,
+                    sp,
+                    du,
+                    pp,
+                    po,
+                    mem_user,
+                    mem_query,
+                    mem_store,
                 ):
                     return _gen(
                         text,
@@ -377,6 +441,9 @@ by Xiaomi AI Lab Next-gen Kaldi team.
                         po,
                         mode="clone",
                         ref_text=ref_text or None,
+                        memory_user_id=mem_user,
+                        memory_query=mem_query,
+                        memory_store_text=mem_store,
                     )
 
                 vc_btn.click(
@@ -394,6 +461,9 @@ by Xiaomi AI Lab Next-gen Kaldi team.
                         vc_du,
                         vc_pp,
                         vc_po,
+                        vc_mem_user,
+                        vc_mem_query,
+                        vc_mem_store,
                     ],
                     outputs=[vc_audio, vc_status],
                 )
@@ -432,6 +502,7 @@ by Xiaomi AI Lab Next-gen Kaldi team.
                             vd_pp,
                             vd_po,
                         ) = _gen_settings()
+                        vd_mem_user, vd_mem_query, vd_mem_store = _memory_settings()
                         vd_btn = gr.Button("Generate / 生成", variant="primary")
                     with gr.Column(scale=1):
                         vd_audio = gr.Audio(
@@ -462,7 +533,21 @@ by Xiaomi AI Lab Next-gen Kaldi team.
                             parts.append(v)
                     return ", ".join(parts)
 
-                def _design_fn(text, lang, ns, gs, dn, sp, du, pp, po, *groups):
+                def _design_fn(
+                    text,
+                    lang,
+                    ns,
+                    gs,
+                    dn,
+                    sp,
+                    du,
+                    pp,
+                    po,
+                    mem_user,
+                    mem_query,
+                    mem_store,
+                    *groups,
+                ):
                     return _gen(
                         text,
                         lang,
@@ -476,6 +561,9 @@ by Xiaomi AI Lab Next-gen Kaldi team.
                         pp,
                         po,
                         mode="design",
+                        memory_user_id=mem_user,
+                        memory_query=mem_query,
+                        memory_store_text=mem_store,
                     )
 
                 vd_btn.click(
@@ -490,6 +578,9 @@ by Xiaomi AI Lab Next-gen Kaldi team.
                         vd_du,
                         vd_pp,
                         vd_po,
+                        vd_mem_user,
+                        vd_mem_query,
+                        vd_mem_store,
                     ]
                     + vd_groups,
                     outputs=[vd_audio, vd_status],
@@ -510,6 +601,7 @@ def main(argv=None) -> int:
     )
     parser = build_parser()
     args = parser.parse_args(argv)
+    memory_manager = MemoriaManager(build_memoria_config(args))
 
     device = args.device or get_best_device()
 
@@ -526,7 +618,12 @@ def main(argv=None) -> int:
     )
     print("Model loaded.")
 
-    demo = build_demo(model, checkpoint)
+    demo = build_demo(
+        model,
+        checkpoint,
+        memory_manager=memory_manager,
+        default_memory_user_id=args.memoria_user_id,
+    )
 
     demo.queue().launch(
         server_name=args.ip,
