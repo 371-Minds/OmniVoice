@@ -543,21 +543,34 @@ def main():
                     )
 
             args_dict = vars(args).copy()
-            memory_store_index = {
-                sample[0]: MemoryRecord(
-                    user_id=sample[8],
-                    text=sample[10],
+            memory_store_index = {}
+            for sample in samples:
+                (
+                    sample_id,
+                    _ref_text,
+                    _ref_audio,
+                    sample_text,
+                    sample_lang,
+                    _duration,
+                    _speed,
+                    _instruct,
+                    memory_user_id,
+                    memory_query,
+                    memory_store_text,
+                ) = sample
+                if not memory_user_id or not memory_store_text:
+                    continue
+                memory_store_index[sample_id] = MemoryRecord(
+                    user_id=memory_user_id,
+                    text=memory_store_text,
                     metadata={
                         "source": "omnivoice-infer-batch",
-                        "sample_id": sample[0],
-                        "text": sample[3],
-                        "language": sample[4],
-                        "memory_query": sample[9],
+                        "sample_id": sample_id,
+                        "text": sample_text,
+                        "language": sample_lang,
+                        "memory_query": memory_query,
                     },
                 )
-                for sample in samples
-                if sample[8] and sample[10]
-            }
             for batch in batches:
                 future = executor.submit(run_inference_batch, batch_samples=batch, **args_dict)
                 futures.append(future)

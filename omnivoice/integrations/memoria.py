@@ -232,7 +232,7 @@ class LocalOnnxEmbedder:
         mask = attention_mask[..., None]
         pooled = (hidden * mask).sum(axis=1) / np.clip(mask.sum(axis=1), 1.0, None)
         norms = np.linalg.norm(pooled, axis=1, keepdims=True)
-        pooled = pooled / np.clip(norms, 1e-12, None)
+        pooled = pooled / np.maximum(norms, 1e-12)
         return pooled.astype(np.float32).tolist()
 
 
@@ -352,7 +352,7 @@ class MemoriaManager:
             "start_new_session": True,
         }
         if os.name == "nt":
-            kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         subprocess.Popen(
             [sys.executable, "-m", "omnivoice.integrations.memoria_worker", encoded],
             **kwargs,
@@ -415,16 +415,20 @@ class MemoriaManager:
                 """,
                 (user_id,),
             ).fetchall()
-        scored: list[tuple[float, str]] = []
-        query_norm = float(np.linalg.norm(query_embedding))
-        for row in rows:
-            text = row["text"]
-            embedding = np.asarray(json.loads(row["embedding_json"]), dtype=np.float32)
-            denom = query_norm * float(np.linalg.norm(embedding))
-            score = 0.0 if denom == 0 else float(np.dot(query_embedding, embedding) / denom)
-            scored.append((score, text))
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return [text for _, text in scored[:top_k]]
+        if not rows:
+            return []
+        texts = [row["text"] for row in rows]
+        matrix = np.asarray(
+            [json.loads(row["embedding_json"]) for row in rows],
+            dtype=np.float32,
+        )
+        denom = np.maximum(
+            np.linalg.norm(matrix, axis=1) * np.linalg.norm(query_embedding),
+            1e-12,
+        )
+        scores = np.dot(matrix, query_embedding) / denom
+        indices = np.argsort(scores)[::-1][:top_k]
+        return [texts[index] for index in indices]
 
     def _local_store_many(self, records: list[MemoryRecord]) -> list[dict[str, Any]]:
         texts = [record.text for record in records]
