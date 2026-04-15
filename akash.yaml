@@ -12,11 +12,11 @@ services:
         omnivoice-demo --ip 0.0.0.0 --port 7860
     env:
       - HF_HOME=/data/huggingface
-      - OMNIVOICE_MEMORIA_MODE=auto
+      - OMNIVOICE_MEMORIA_MODE=off
       - MEMORIA_URL=
       - MEMORIA_API_KEY=
       - MEMORIA_USER_ID=akash-demo
-      # Download or mount the ONNX model at this path before enabling local mode.
+      # Enable local mode only after mounting an ONNX embedding model at this path.
       - MEMORIA_ONNX_MODEL=/data/models/all-MiniLM-L6-v2/model.onnx
       - MEMORIA_TOKENIZER=sentence-transformers/all-MiniLM-L6-v2
     expose:

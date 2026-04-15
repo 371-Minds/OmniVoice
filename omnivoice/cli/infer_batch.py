@@ -542,7 +542,7 @@ def main():
                         )
                     )
 
-            args_dict = vars(args).copy()
+            args_dict = vars(args)
             memory_store_index = {}
             for sample in samples:
                 (

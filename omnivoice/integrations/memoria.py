@@ -353,10 +353,11 @@ class MemoriaManager:
         }
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        subprocess.Popen(
+        process = subprocess.Popen(
             [sys.executable, "-m", "omnivoice.integrations.memoria_worker", encoded],
             **kwargs,
         )
+        self.logger.debug("Queued Memoria worker pid=%s for %s record(s).", process.pid, len(prepared))
         return [item["mref"] for item in prepared]
 
     def store_many_sync(self, records: Iterable[MemoryRecord]) -> list[dict[str, Any]]:
@@ -486,8 +487,8 @@ class MemoriaManager:
                     for inner_index, (text, embedding) in enumerate(
                         zip(batch, batch_embeddings)
                     ):
-                        absolute_index = uncached_indices[offset + inner_index]
-                        generated[absolute_index] = embedding
+                        original_text_index = uncached_indices[offset + inner_index]
+                        generated[original_text_index] = embedding
                         self._store_embedding_cache(conn, text, embedding)
         result = []
         for index in range(len(texts)):
