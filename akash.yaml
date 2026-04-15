@@ -16,9 +16,6 @@ services:
       - MEMORIA_URL=
       - MEMORIA_API_KEY=
       - MEMORIA_USER_ID=akash-demo
-      # Enable local mode only after mounting an ONNX embedding model at this path.
-      - MEMORIA_ONNX_MODEL=/data/models/all-MiniLM-L6-v2/model.onnx
-      - MEMORIA_TOKENIZER=sentence-transformers/all-MiniLM-L6-v2
     expose:
       - port: 7860
         as: 80

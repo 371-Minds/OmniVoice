@@ -371,7 +371,7 @@ class MemoriaManager:
         return []
 
     def _make_mref(self) -> str:
-        return f"mref_{uuid.uuid4().hex[:8]}"
+        return f"mref_{uuid.uuid4().hex[:16]}"
 
     def _remote_healthcheck(self) -> None:
         if not self.config.remote_url:
@@ -492,7 +492,10 @@ class MemoriaManager:
                         self._store_embedding_cache(conn, text, embedding)
         result = []
         for index in range(len(texts)):
-            result.append(cache_hits.get(index) or generated[index])
+            embedding = cache_hits.get(index) or generated.get(index)
+            if embedding is None:
+                raise RuntimeError(f"Missing embedding for text index {index}")
+            result.append(embedding)
         return result
 
     def _get_embedder(self) -> LocalOnnxEmbedder:
